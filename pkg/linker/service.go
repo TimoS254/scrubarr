@@ -22,15 +22,11 @@ func (s Service) LinkMedia(mediaEntries []*domain.MediaEntry, torrentEntries []*
 			MediaMetadata: mediaEntry.MediaMetadata,
 		}
 		for _, mediaFile := range mediaEntry.Files {
-			linkedMediaFile, found := searchLinkedTorrentEntry(mediaFile, torrentEntries)
-			if !found {
-				linkedMediaFile = inventory.LinkedMediaFile{MediaFile: mediaFile}
+			linkedMediaFile := inventory.LinkedMediaFile{
+				MediaFile:      mediaFile,
+				TorrentEntries: searchLinkedTorrentEntries(mediaFile, torrentEntries),
 			}
-			if linkedMedia.Files == nil {
-				linkedMedia.Files = []inventory.LinkedMediaFile{linkedMediaFile}
-			} else {
-				linkedMedia.Files = append(linkedMedia.Files, linkedMediaFile)
-			}
+			linkedMedia.Files = append(linkedMedia.Files, linkedMediaFile)
 		}
 		if linkedMedia.Files != nil {
 			linkedMedias = append(linkedMedias, *linkedMedia)
@@ -39,34 +35,39 @@ func (s Service) LinkMedia(mediaEntries []*domain.MediaEntry, torrentEntries []*
 	return linkedMedias, nil
 }
 
-func searchLinkedTorrentEntry(mediaFile domain.MediaFile, torrentEntries []*domain.TorrentEntry) (inventory.LinkedMediaFile, bool) {
+// searchLinkedTorrentEntries returns all torrent entries containing the given media file. Multiple entries are
+// returned if the file is cross-seeded to several trackers.
+func searchLinkedTorrentEntries(mediaFile domain.MediaFile, torrentEntries []*domain.TorrentEntry) []*domain.TorrentEntry {
+	var linkedTorrentEntries []*domain.TorrentEntry
 	for _, torrentEntry := range torrentEntries {
-		linkedMediaFile := inventory.LinkedMediaFile{
-			MediaFile:    mediaFile,
-			TorrentEntry: torrentEntry,
-		}
-
-		if torrentEntry.Name == mediaFile.OriginalFilePath {
-			return linkedMediaFile, true
-		}
-
-		torrentEntryNameWithExt := torrentEntry.Name + filepath.Ext(mediaFile.OriginalFilePath)
-		if torrentEntryNameWithExt == mediaFile.OriginalFilePath {
-			return linkedMediaFile, true
-		}
-
-		for _, torrentEntryFile := range torrentEntry.Files {
-			if torrentEntryFile.Size != mediaFile.Size {
-				continue
-			}
-			if torrentEntryFile.Path == mediaFile.OriginalFilePath {
-				return linkedMediaFile, true
-			}
-			torrentFileBase := filepath.Base(torrentEntryFile.Path)
-			if torrentFileBase == mediaFile.OriginalFilePath {
-				return linkedMediaFile, true
-			}
+		if isTorrentEntryMatching(mediaFile, torrentEntry) {
+			linkedTorrentEntries = append(linkedTorrentEntries, torrentEntry)
 		}
 	}
-	return inventory.LinkedMediaFile{}, false
+	return linkedTorrentEntries
+}
+
+func isTorrentEntryMatching(mediaFile domain.MediaFile, torrentEntry *domain.TorrentEntry) bool {
+	if torrentEntry.Name == mediaFile.OriginalFilePath {
+		return true
+	}
+
+	torrentEntryNameWithExt := torrentEntry.Name + filepath.Ext(mediaFile.OriginalFilePath)
+	if torrentEntryNameWithExt == mediaFile.OriginalFilePath {
+		return true
+	}
+
+	for _, torrentEntryFile := range torrentEntry.Files {
+		if torrentEntryFile.Size != mediaFile.Size {
+			continue
+		}
+		if torrentEntryFile.Path == mediaFile.OriginalFilePath {
+			return true
+		}
+		torrentFileBase := filepath.Base(torrentEntryFile.Path)
+		if torrentFileBase == mediaFile.OriginalFilePath {
+			return true
+		}
+	}
+	return false
 }

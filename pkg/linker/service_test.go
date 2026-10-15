@@ -69,6 +69,10 @@ func TestService_LinkMedia(t *testing.T) {
 		10,
 	}}
 
+	torrentEntryCrossSeed := torrentEntry
+	torrentEntryCrossSeed.Id = "stc-2"
+	torrentEntryCrossSeed.Trackers = []string{"mock-tracker-2"}
+
 	type args struct {
 		media    []*domain.MediaEntry
 		torrents []*domain.TorrentEntry
@@ -98,7 +102,7 @@ func TestService_LinkMedia(t *testing.T) {
 			},
 			[]inventory.LinkedMedia{{
 				mediaMetaData,
-				[]inventory.LinkedMediaFile{{mediaFile, &torrentEntry}},
+				[]inventory.LinkedMediaFile{{mediaFile, []*domain.TorrentEntry{&torrentEntry}}},
 			}},
 			false,
 		},
@@ -110,7 +114,7 @@ func TestService_LinkMedia(t *testing.T) {
 			},
 			[]inventory.LinkedMedia{{
 				mediaMetaData,
-				[]inventory.LinkedMediaFile{{mediaFile, &torrentEntryWithoutExt}},
+				[]inventory.LinkedMediaFile{{mediaFile, []*domain.TorrentEntry{&torrentEntryWithoutExt}}},
 			}},
 			false,
 		},
@@ -122,7 +126,7 @@ func TestService_LinkMedia(t *testing.T) {
 			},
 			[]inventory.LinkedMedia{{
 				mediaMetaData,
-				[]inventory.LinkedMediaFile{{mediaFile, &torrentEntryOnlyFileMatch}},
+				[]inventory.LinkedMediaFile{{mediaFile, []*domain.TorrentEntry{&torrentEntryOnlyFileMatch}}},
 			}},
 			false,
 		},
@@ -134,7 +138,19 @@ func TestService_LinkMedia(t *testing.T) {
 			},
 			[]inventory.LinkedMedia{{
 				mediaMetaData,
-				[]inventory.LinkedMediaFile{{mediaFile, &torrentEntryOnlyFileMatchWithFullPath}},
+				[]inventory.LinkedMediaFile{{mediaFile, []*domain.TorrentEntry{&torrentEntryOnlyFileMatchWithFullPath}}},
+			}},
+			false,
+		},
+		{
+			"media linked with all cross-seeded torrent entries",
+			args{
+				[]*domain.MediaEntry{&mediaEntry},
+				[]*domain.TorrentEntry{&torrentEntry, &torrentEntryNoMatch, &torrentEntryCrossSeed},
+			},
+			[]inventory.LinkedMedia{{
+				mediaMetaData,
+				[]inventory.LinkedMediaFile{{mediaFile, []*domain.TorrentEntry{&torrentEntry, &torrentEntryCrossSeed}}},
 			}},
 			false,
 		},

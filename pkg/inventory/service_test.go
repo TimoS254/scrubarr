@@ -1,6 +1,7 @@
 package inventory
 
 import (
+	"io"
 	"testing"
 	"time"
 
@@ -56,10 +57,10 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									OriginalFilePath: "some/path/anywhere/Some-movie-title-1080p.mp4",
 									Size:             int64(8232),
 								},
-								TorrentEntry: &domain.TorrentEntry{
+								TorrentEntries: []*domain.TorrentEntry{{
 									Ratio: 1.4,
 									Added: util.MustParseDate("2022-08-12 00:00:00"),
-								},
+								}},
 							},
 						},
 					},
@@ -114,7 +115,7 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									Season:           1,
 									Size:             1000,
 								},
-								TorrentEntry: torrentEntry1,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry1},
 							},
 							{
 								MediaFile: domain.MediaFile{
@@ -123,7 +124,7 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									Season:           1,
 									Size:             1000,
 								},
-								TorrentEntry: torrentEntry1,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry1},
 							},
 							{
 								MediaFile: domain.MediaFile{
@@ -132,7 +133,7 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									Season:           2,
 									Size:             1500,
 								},
-								TorrentEntry: torrentEntry2,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry2},
 							},
 						},
 					},
@@ -209,7 +210,7 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									OriginalFilePath: "some/path/anywhere/Some-movie-title-1080p.mp4",
 									Size:             int64(8232),
 								},
-								TorrentEntry: nil,
+								TorrentEntries: nil,
 							},
 						},
 					},
@@ -255,7 +256,7 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									Season:           1,
 									Size:             1000,
 								},
-								TorrentEntry: torrentEntry1,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry1},
 							},
 							{
 								MediaFile: domain.MediaFile{
@@ -264,7 +265,7 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									Season:           1,
 									Size:             1000,
 								},
-								TorrentEntry: nil,
+								TorrentEntries: nil,
 							},
 							{
 								MediaFile: domain.MediaFile{
@@ -273,7 +274,7 @@ func Test_generateRawFileBasedMediaRow(t *testing.T) {
 									Season:           2,
 									Size:             1500,
 								},
-								TorrentEntry: torrentEntry2,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry2},
 							},
 						},
 					},
@@ -665,14 +666,14 @@ func Test_applyEvaluationReport(t *testing.T) {
 									Id:     1337_1,
 									Season: 1,
 								},
-								TorrentEntry: torrentEntry1,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry1},
 							},
 							{
 								MediaFile: domain.MediaFile{
 									Id:     1337_2,
 									Season: 1,
 								},
-								TorrentEntry: torrentEntry1,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry1},
 							},
 						},
 					},
@@ -755,14 +756,14 @@ func Test_applyEvaluationReport(t *testing.T) {
 									Id:     1337_1,
 									Season: 1,
 								},
-								TorrentEntry: torrentEntry1,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry1},
 							},
 							{
 								MediaFile: domain.MediaFile{
 									Id:     1337_2,
 									Season: 1,
 								},
-								TorrentEntry: torrentEntry2,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry2},
 							},
 						},
 					},
@@ -860,14 +861,14 @@ func Test_applyEvaluationReport(t *testing.T) {
 									Id:     1337_1,
 									Season: 1,
 								},
-								TorrentEntry: torrentEntry1,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry1},
 							},
 							{
 								MediaFile: domain.MediaFile{
 									Id:     1337_2,
 									Season: 1,
 								},
-								TorrentEntry: torrentEntry2,
+								TorrentEntries: []*domain.TorrentEntry{torrentEntry2},
 							},
 						},
 					},
@@ -961,4 +962,110 @@ func Test_applyEvaluationReport(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func Test_getRawMediaRowFromFile_CrossSeed(t *testing.T) {
+	currentTime := util.MustParseDate("2023-08-12 00:00:00")
+	file := LinkedMediaFile{
+		MediaFile: domain.MediaFile{Id: 10, OriginalFilePath: "movie.mp4", Size: 100},
+		TorrentEntries: []*domain.TorrentEntry{
+			{Ratio: 2.6, Added: util.MustParseDate("2022-08-12 00:00:00")},
+			{Ratio: 0.9, Added: util.MustParseDate("2023-08-11 00:00:00")},
+			{Ratio: 1.2, Added: util.MustParseDate("2023-01-01 00:00:00")},
+		},
+	}
+	row := getRawMediaRowFromFile(currentTime, "movie-1", file)
+	require.Equal(t, webserver.TorrentInformation{
+		LinkStatus: webserver.TorrentLinkPresent,
+		Ratio:      0.9,
+		Age:        24 * time.Hour,
+	}, row.TorrentInformation)
+	require.Equal(t, util.MustParseDate("2023-08-11 00:00:00"), row.Added)
+}
+
+type mockMediaSourceManager struct {
+	media          []*domain.MediaEntry
+	deletedFileIds []int64
+}
+
+func (m *mockMediaSourceManager) RefreshCache() error             { return nil }
+func (m *mockMediaSourceManager) SaveCache(_ io.Writer) error     { return nil }
+func (m *mockMediaSourceManager) LoadCache(_ io.ReadSeeker) error { return nil }
+func (m *mockMediaSourceManager) GetMedia() ([]*domain.MediaEntry, error) {
+	return m.media, nil
+}
+func (m *mockMediaSourceManager) DeleteMediaFiles(_ domain.MediaType, fileIds []int64, _ bool) error {
+	m.deletedFileIds = append(m.deletedFileIds, fileIds...)
+	return nil
+}
+
+type mockTorrentSourceManager struct {
+	torrents        []*domain.TorrentEntry
+	deletedTorrents []string
+}
+
+func (m *mockTorrentSourceManager) RefreshCache() error             { return nil }
+func (m *mockTorrentSourceManager) SaveCache(_ io.Writer) error     { return nil }
+func (m *mockTorrentSourceManager) LoadCache(_ io.ReadSeeker) error { return nil }
+func (m *mockTorrentSourceManager) GetTorrents() ([]*domain.TorrentEntry, error) {
+	return m.torrents, nil
+}
+func (m *mockTorrentSourceManager) DeleteTorrent(client string, id string) error {
+	m.deletedTorrents = append(m.deletedTorrents, client+"|"+id)
+	return nil
+}
+
+// mockLinker links every media file to all torrents with the same name as the file path.
+type mockLinker struct{}
+
+func (mockLinker) LinkMedia(media []*domain.MediaEntry, torrents []*domain.TorrentEntry) ([]LinkedMedia, error) {
+	linkedMediaList := make([]LinkedMedia, 0)
+	for _, mediaEntry := range media {
+		linkedMedia := LinkedMedia{MediaMetadata: mediaEntry.MediaMetadata}
+		for _, file := range mediaEntry.Files {
+			linkedFile := LinkedMediaFile{MediaFile: file}
+			for _, torrent := range torrents {
+				if torrent.Name == file.OriginalFilePath {
+					linkedFile.TorrentEntries = append(linkedFile.TorrentEntries, torrent)
+				}
+			}
+			linkedMedia.Files = append(linkedMedia.Files, linkedFile)
+		}
+		linkedMediaList = append(linkedMediaList, linkedMedia)
+	}
+	return linkedMediaList, nil
+}
+
+type mockRetentionPolicy struct{}
+
+func (mockRetentionPolicy) Evaluate(_ LinkedMedia) (EvaluationReport, error) {
+	return EvaluationReport{Result: EvaluationReportPart{Decision: domain.DecisionSafeToDelete}}, nil
+}
+
+func (mockRetentionPolicy) EvaluateTorrentEntry(_ *domain.TorrentEntry) (domain.Decision, *domain.Tracker, error) {
+	return domain.DecisionSafeToDelete, nil, nil
+}
+
+func TestService_CrossSeed(t *testing.T) {
+	mediaManager := &mockMediaSourceManager{media: []*domain.MediaEntry{{
+		MediaMetadata: domain.MediaMetadata{Id: 1, Type: domain.MediaTypeMovie, Title: "Some movie"},
+		Files:         []domain.MediaFile{{Id: 11, Season: -1, OriginalFilePath: "movie.mp4", Size: 100}},
+	}}}
+	torrentManager := &mockTorrentSourceManager{torrents: []*domain.TorrentEntry{
+		{Client: "deluge", Id: "original", Name: "movie.mp4"},
+		{Client: "deluge", Id: "cross-seed", Name: "movie.mp4"},
+		{Client: "rtorrent", Id: "cross-seed-other-client", Name: "movie.mp4"},
+		{Client: "deluge", Id: "orphan", Name: "other.mp4"},
+	}}
+	service := NewService(false, false, mediaManager, torrentManager, mockLinker{}, mockRetentionPolicy{})
+	require.NoError(t, service.RefreshCache())
+
+	// cross-seeds must not be reported as orphaned torrents
+	require.Len(t, service.orphanedTorrentsCache, 1)
+	require.Equal(t, "orphan", service.orphanedTorrentsCache[0].torrentEntry.Id)
+
+	// deleting the media removes all cross-seeded torrents
+	require.NoError(t, service.DeleteMedia("movie-1"))
+	require.Equal(t, []string{"deluge|original", "deluge|cross-seed", "rtorrent|cross-seed-other-client"}, torrentManager.deletedTorrents)
+	require.Equal(t, []int64{11}, mediaManager.deletedFileIds)
 }

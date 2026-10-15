@@ -125,8 +125,8 @@ func (s *Service) RefreshCache() error {
 	usedTorrentKeys := make(map[string]struct{})
 	for _, lm := range linkedMediaList {
 		for _, file := range lm.Files {
-			if file.TorrentEntry != nil {
-				usedTorrentKeys[uniqueTorrentId(file.TorrentEntry.Client, file.TorrentEntry.Id)] = struct{}{}
+			for _, torrentEntry := range file.TorrentEntries {
+				usedTorrentKeys[uniqueTorrentId(torrentEntry.Client, torrentEntry.Id)] = struct{}{}
 			}
 		}
 	}

@@ -71,9 +71,10 @@ func NewService(useCache, saveCache bool, mediaSourceManager domain.MediaSourceM
 func getAdded(linkedMedia LinkedMedia) time.Time {
 	added := linkedMedia.Added
 	for _, file := range linkedMedia.Files {
-		torrentEntry := file.TorrentEntry
-		if torrentEntry != nil && !torrentEntry.Added.IsZero() && torrentEntry.Added.After(added) {
-			added = torrentEntry.Added
+		for _, torrentEntry := range file.TorrentEntries {
+			if !torrentEntry.Added.IsZero() && torrentEntry.Added.After(added) {
+				added = torrentEntry.Added
+			}
 		}
 	}
 	return added
@@ -206,13 +207,18 @@ func getRawMediaRowFromFile(currentTime time.Time, id string, file LinkedMediaFi
 		Age:        time.Duration(-1),
 	}
 	var added time.Time
-	if file.TorrentEntry != nil {
-		fileTorrentInformation = webserver.TorrentInformation{
-			LinkStatus: webserver.TorrentLinkPresent,
-			Ratio:      file.TorrentEntry.Ratio,
-			Age:        currentTime.Sub(file.TorrentEntry.Added),
+	// for files linked to multiple torrents (cross-seeds), show the lowest ratio and the most recently added torrent
+	for i, torrentEntry := range file.TorrentEntries {
+		if i == 0 || torrentEntry.Ratio < fileTorrentInformation.Ratio {
+			fileTorrentInformation.Ratio = torrentEntry.Ratio
 		}
-		added = file.TorrentEntry.Added
+		if i == 0 || torrentEntry.Added.After(added) {
+			added = torrentEntry.Added
+		}
+	}
+	if len(file.TorrentEntries) > 0 {
+		fileTorrentInformation.LinkStatus = webserver.TorrentLinkPresent
+		fileTorrentInformation.Age = currentTime.Sub(added)
 	}
 	fileMediaRow := webserver.MediaRow{
 		Id:                 fileId,
@@ -398,20 +404,20 @@ func (s *Service) DeleteMedia(rawId string) error {
 	deletedTorrentEntries := make(map[*domain.TorrentEntry]struct{})
 	fileIdsToDelete := make([]int64, 0)
 
-	// delete torrent entries
+	// delete torrent entries, including all cross-seeds of the affected files
 	for _, affectedFileIndex := range affectedFileIndexes {
 		affectedFile := entry.linkedMedia.Files[affectedFileIndex]
-		if affectedFile.TorrentEntry != nil {
-			_, ok := deletedTorrentEntries[affectedFile.TorrentEntry]
-			if !ok {
-				err = s.torrentSourceManager.DeleteTorrent(affectedFile.TorrentEntry.Client, affectedFile.TorrentEntry.Id)
-				if errors.Is(err, domain.ErrTorrentNotFound) {
-					slog.Warn("could not find torrent entry for deletion", "linkedMediaTitle", entry.linkedMedia.Title, "file", affectedFile)
-				} else if err != nil {
-					return fmt.Errorf("could not delete torrent for linked media %q (file: %+v): %w", entry.linkedMedia.Title, affectedFile, err)
-				}
-				deletedTorrentEntries[affectedFile.TorrentEntry] = struct{}{}
+		for _, torrentEntry := range affectedFile.TorrentEntries {
+			if _, ok := deletedTorrentEntries[torrentEntry]; ok {
+				continue
 			}
+			err = s.torrentSourceManager.DeleteTorrent(torrentEntry.Client, torrentEntry.Id)
+			if errors.Is(err, domain.ErrTorrentNotFound) {
+				slog.Warn("could not find torrent entry for deletion", "linkedMediaTitle", entry.linkedMedia.Title, "file", affectedFile, "torrentEntry", torrentEntry)
+			} else if err != nil {
+				return fmt.Errorf("could not delete torrent %s for linked media %q (file: %+v): %w", torrentEntry, entry.linkedMedia.Title, affectedFile, err)
+			}
+			deletedTorrentEntries[torrentEntry] = struct{}{}
 		}
 		fileIdsToDelete = append(fileIdsToDelete, affectedFile.Id)
 	}

@@ -13,5 +13,7 @@ type LinkedMedia struct {
 
 type LinkedMediaFile struct {
 	domain.MediaFile
-	TorrentEntry *domain.TorrentEntry
+	// TorrentEntries holds every torrent containing this file, e.g. multiple entries when it is cross-seeded to
+	// several trackers.
+	TorrentEntries []*domain.TorrentEntry
 }
