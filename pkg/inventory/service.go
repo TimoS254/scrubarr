@@ -87,14 +87,24 @@ func getSize(linkedMedia LinkedMedia) int64 {
 	return size
 }
 
+// ensureCacheLoaded refreshes the cache if it has not been populated yet. It must be called without holding the lock,
+// since RefreshCache acquires the write lock and sync.RWMutex does not support upgrading a held read lock.
+func (s *Service) ensureCacheLoaded() error {
+	s.RLock()
+	loaded := s.enrichedLinkedMediaCache != nil
+	s.RUnlock()
+	if loaded {
+		return nil
+	}
+	return s.RefreshCache()
+}
+
 func (s *Service) GetMediaInventory(page int, sortInfo webserver.SortInfo) (mediaRows []webserver.MediaRow, hasNext bool, err error) {
+	if err := s.ensureCacheLoaded(); err != nil {
+		return nil, false, err
+	}
 	s.RLock()
 	defer s.RUnlock()
-	if s.enrichedLinkedMediaCache == nil {
-		if err := s.RefreshCache(); err != nil {
-			return nil, false, err
-		}
-	}
 	enrichedLinkedMediaList := slices.Clone(s.enrichedLinkedMediaCache)
 	slices.SortFunc(enrichedLinkedMediaList, func(a, b enrichedLinkedMedia) int {
 		var result int
@@ -305,13 +315,11 @@ func applyEvaluationReport(media enrichedLinkedMedia, row webserver.MediaRow) we
 }
 
 func (s *Service) GetOrphanedTorrents(page int, sortInfo webserver.SortInfo) (rows []webserver.OrphanedTorrentRow, hasNext bool, err error) {
+	if err := s.ensureCacheLoaded(); err != nil {
+		return nil, false, err
+	}
 	s.RLock()
 	defer s.RUnlock()
-	if s.enrichedLinkedMediaCache == nil {
-		if err := s.RefreshCache(); err != nil {
-			return nil, false, err
-		}
-	}
 	all := slices.Clone(s.orphanedTorrentsCache)
 	slices.SortFunc(all, func(a, b enrichedOrphanedTorrent) int {
 		var result int
