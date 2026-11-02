@@ -68,14 +68,21 @@ func NewService(useCache, saveCache bool, mediaSourceManager domain.MediaSourceM
 	return &Service{RWMutex: &sync.RWMutex{}, useCache: useCache, saveCache: saveCache, mediaSourceManager: mediaSourceManager, torrentSourceManager: torrentSourceManager, linker: linker, retentionPolicy: retentionPolicy}
 }
 
+// getAdded returns the date the first torrent linked to the given media was added. If no torrent is linked (e.g. the
+// torrent was already removed from the client), the added date reported by the media source is returned instead.
 func getAdded(linkedMedia LinkedMedia) time.Time {
-	added := linkedMedia.Added
+	var added time.Time
+	found := false
 	for _, file := range linkedMedia.Files {
 		for _, torrentEntry := range file.TorrentEntries {
-			if !torrentEntry.Added.IsZero() && torrentEntry.Added.After(added) {
+			if !found || torrentEntry.Added.Before(added) {
 				added = torrentEntry.Added
+				found = true
 			}
 		}
+	}
+	if !found {
+		return linkedMedia.Added
 	}
 	return added
 }
@@ -207,17 +214,12 @@ func getRawMediaRowFromFile(currentTime time.Time, id string, file LinkedMediaFi
 		Age:        time.Duration(-1),
 	}
 	var added time.Time
-	// for files linked to multiple torrents (cross-seeds), show the lowest ratio and the most recently added torrent
-	for i, torrentEntry := range file.TorrentEntries {
-		if i == 0 || torrentEntry.Ratio < fileTorrentInformation.Ratio {
-			fileTorrentInformation.Ratio = torrentEntry.Ratio
-		}
-		if i == 0 || torrentEntry.Added.After(added) {
-			added = torrentEntry.Added
-		}
-	}
-	if len(file.TorrentEntries) > 0 {
+	// for files linked to multiple torrents, only the original one is relevant for deletion protection, cross-seeds
+	// of it are ignored
+	if torrentEntry := file.OriginalTorrentEntry(); torrentEntry != nil {
+		added = torrentEntry.Added
 		fileTorrentInformation.LinkStatus = webserver.TorrentLinkPresent
+		fileTorrentInformation.Ratio = torrentEntry.Ratio
 		fileTorrentInformation.Age = currentTime.Sub(added)
 	}
 	fileMediaRow := webserver.MediaRow{

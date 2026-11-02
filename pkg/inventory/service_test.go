@@ -975,12 +975,13 @@ func Test_getRawMediaRowFromFile_CrossSeed(t *testing.T) {
 		},
 	}
 	row := getRawMediaRowFromFile(currentTime, "movie-1", file)
+	// only the original (first added) torrent is shown, cross-seeds are ignored
 	require.Equal(t, webserver.TorrentInformation{
 		LinkStatus: webserver.TorrentLinkPresent,
-		Ratio:      0.9,
-		Age:        24 * time.Hour,
+		Ratio:      2.6,
+		Age:        365 * 24 * time.Hour,
 	}, row.TorrentInformation)
-	require.Equal(t, util.MustParseDate("2023-08-11 00:00:00"), row.Added)
+	require.Equal(t, util.MustParseDate("2022-08-12 00:00:00"), row.Added)
 }
 
 type mockMediaSourceManager struct {
@@ -1068,4 +1069,61 @@ func TestService_CrossSeed(t *testing.T) {
 	require.NoError(t, service.DeleteMedia("movie-1"))
 	require.Equal(t, []string{"deluge|original", "deluge|cross-seed", "rtorrent|cross-seed-other-client"}, torrentManager.deletedTorrents)
 	require.Equal(t, []int64{11}, mediaManager.deletedFileIds)
+}
+
+func Test_getAdded(t *testing.T) {
+	mediaAdded := util.MustParseDate("2019-01-01 00:00:00")
+	first := &domain.TorrentEntry{Added: util.MustParseDate("2020-08-12 00:00:00")}
+	crossSeed := &domain.TorrentEntry{Added: util.MustParseDate("2021-03-01 00:00:00")}
+	later := &domain.TorrentEntry{Added: util.MustParseDate("2022-05-05 00:00:00")}
+
+	tests := []struct {
+		name  string
+		files []LinkedMediaFile
+		want  time.Time
+	}{
+		{
+			name: "earliest torrent across files and cross-seeds",
+			files: []LinkedMediaFile{
+				{TorrentEntries: []*domain.TorrentEntry{later}},
+				{TorrentEntries: []*domain.TorrentEntry{crossSeed, first}},
+			},
+			want: first.Added,
+		},
+		{
+			name:  "falls back to media added date without linked torrents",
+			files: []LinkedMediaFile{{}, {}},
+			want:  mediaAdded,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			linkedMedia := LinkedMedia{MediaMetadata: domain.MediaMetadata{Added: mediaAdded}, Files: tt.files}
+			require.Equal(t, tt.want, getAdded(linkedMedia))
+		})
+	}
+}
+
+func Test_applyEvaluationReport_SeasonPackWithCrossSeed(t *testing.T) {
+	now = func() time.Time {
+		return util.MustParseDate("2023-08-12 00:00:00")
+	}
+	seasonPack := &domain.TorrentEntry{Id: "pack", Ratio: 1.0, Added: util.MustParseDate("2022-01-01 00:00:00")}
+	crossSeed := &domain.TorrentEntry{Id: "single", Ratio: 0.5, Added: util.MustParseDate("2022-02-01 00:00:00")}
+	media := enrichedLinkedMedia{
+		linkedMedia: LinkedMedia{
+			MediaMetadata: domain.MediaMetadata{Id: 1, Type: domain.MediaTypeSeries},
+			Files: []LinkedMediaFile{
+				{MediaFile: domain.MediaFile{Id: 1, Season: 1}, TorrentEntries: []*domain.TorrentEntry{crossSeed, seasonPack}},
+				{MediaFile: domain.MediaFile{Id: 2, Season: 1}, TorrentEntries: []*domain.TorrentEntry{seasonPack}},
+			},
+		},
+		evaluationReport: EvaluationReport{Files: map[int64]EvaluationReportPart{}, Seasons: map[int]EvaluationReportPart{}},
+	}
+	row := getMediaRow(media)
+	require.Len(t, row.ChildMediaRows, 1)
+	// a cross-seed of a single episode must not allow deleting episodes of the season pack individually
+	for _, episodeRow := range row.ChildMediaRows[0].ChildMediaRows {
+		require.False(t, episodeRow.AllowDeletion, "episode %s", episodeRow.Id)
+	}
 }

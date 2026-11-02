@@ -344,13 +344,16 @@ func TestService_Evaluate_CrossSeed(t *testing.T) {
 	trackerB := &domain.Tracker{Name: "tracker-b", MinRatio: 0, MinAge: time.Hour * 24 * 30}
 	resolver := mockMultiTrackerResolver{"a": trackerA, "b": trackerB}
 
-	// satisfies tracker a rules
+	// original torrent, satisfies tracker a rules
 	torrentA := &domain.TorrentEntry{Id: "a", Trackers: []string{"a"}, Ratio: 2, Added: util.MustParseDate("2025-12-01 00:00:00")}
-	torrentA2 := &domain.TorrentEntry{Id: "a2", Trackers: []string{"a"}, Ratio: 1.5, Added: util.MustParseDate("2025-12-01 00:00:00")}
-	// cross-seed added recently, does not satisfy tracker b min age yet
+	// original torrent, does not satisfy tracker a min ratio
+	torrentALowRatio := &domain.TorrentEntry{Id: "a-low", Trackers: []string{"a"}, Ratio: 0.5, Added: util.MustParseDate("2025-12-01 00:00:00")}
+	// cross-seed added later, does not satisfy tracker b min age
 	torrentBRecent := &domain.TorrentEntry{Id: "b-recent", Trackers: []string{"b"}, Ratio: 0, Added: util.MustParseDate("2026-01-25 00:00:00")}
-	torrentBOld := &domain.TorrentEntry{Id: "b-old", Trackers: []string{"b"}, Ratio: 0, Added: util.MustParseDate("2025-12-01 00:00:00")}
-	torrentUnknown := &domain.TorrentEntry{Id: "unknown", Trackers: []string{"unknown"}, Ratio: 10, Added: util.MustParseDate("2020-01-01 00:00:00")}
+	// cross-seed added later, satisfies tracker b rules
+	torrentBOld := &domain.TorrentEntry{Id: "b-old", Trackers: []string{"b"}, Ratio: 0, Added: util.MustParseDate("2025-12-24 00:00:00")}
+	// cross-seed added later with unknown tracker
+	torrentUnknown := &domain.TorrentEntry{Id: "unknown", Trackers: []string{"unknown"}, Ratio: 10, Added: util.MustParseDate("2026-01-01 00:00:00")}
 
 	mediaWithTorrents := func(torrents ...*domain.TorrentEntry) inventory.LinkedMedia {
 		return inventory.LinkedMedia{
@@ -362,17 +365,18 @@ func TestService_Evaluate_CrossSeed(t *testing.T) {
 		}
 	}
 
+	// only the original (first added) torrent is subject to tracker rules, cross-seeds are ignored
 	tests := []struct {
 		name         string
 		media        inventory.LinkedMedia
 		wantDecision domain.Decision
 		wantTracker  *domain.Tracker
 	}{
-		{"all cross-seeds satisfied", mediaWithTorrents(torrentA, torrentBOld), domain.DecisionSafeToDelete, nil},
-		{"one cross-seed pending", mediaWithTorrents(torrentA, torrentBRecent), domain.DecisionPending, nil},
-		{"pending cross-seed listed first", mediaWithTorrents(torrentBRecent, torrentA), domain.DecisionPending, nil},
-		{"cross-seed with unknown tracker", mediaWithTorrents(torrentA, torrentUnknown), domain.DecisionPending, nil},
-		{"same tracker for all torrents", mediaWithTorrents(torrentA, torrentA2), domain.DecisionSafeToDelete, trackerA},
+		{"pending cross-seed is ignored", mediaWithTorrents(torrentA, torrentBRecent), domain.DecisionSafeToDelete, trackerA},
+		{"original is determined by added date", mediaWithTorrents(torrentBRecent, torrentA), domain.DecisionSafeToDelete, trackerA},
+		{"cross-seed with unknown tracker is ignored", mediaWithTorrents(torrentUnknown, torrentA), domain.DecisionSafeToDelete, trackerA},
+		{"pending original with satisfied cross-seed", mediaWithTorrents(torrentBOld, torrentALowRatio), domain.DecisionPending, trackerA},
+		{"cross-seed only", mediaWithTorrents(torrentBOld), domain.DecisionSafeToDelete, trackerB},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -26,26 +26,18 @@ func (s Service) Evaluate(media inventory.LinkedMedia) (inventory.EvaluationRepo
 	globalDecision := domain.DecisionSafeToDelete
 	files := make(map[int64]inventory.EvaluationReportPart)
 	for _, linkedMediaFile := range media.Files {
-		// a file is only safe to delete if every linked torrent (e.g. cross-seeds) satisfies its tracker rules
+		// only the original (first added) torrent is subject to tracker rules, cross-seeds of it are ignored
 		var tracker *domain.Tracker
 		safeToDelete := true
-		for i, torrentEntry := range linkedMediaFile.TorrentEntries {
-			torrentTracker, err := s.trackerResolver.Resolve(torrentEntry.Trackers)
+		if torrentEntry := linkedMediaFile.OriginalTorrentEntry(); torrentEntry != nil {
+			var err error
+			tracker, err = s.trackerResolver.Resolve(torrentEntry.Trackers)
 			if errors.Is(err, ErrTrackerNotFound) {
 				slog.Warn("tracker not found for linked media file", "linkedMediaFile", linkedMediaFile, "torrentEntry", torrentEntry)
 			} else if err != nil {
 				return inventory.EvaluationReport{}, fmt.Errorf("could not resolve tracker for linked media file (%+v): %w", linkedMediaFile, err)
 			}
-
-			if torrentTracker == nil || !isTorrentEntrySafeToDelete(torrentEntry, torrentTracker) {
-				safeToDelete = false
-			}
-			// only report a tracker if all linked torrents share the same one
-			if i == 0 {
-				tracker = torrentTracker
-			} else if tracker != torrentTracker {
-				tracker = nil
-			}
+			safeToDelete = tracker != nil && isTorrentEntrySafeToDelete(torrentEntry, tracker)
 		}
 		decision := domain.DecisionSafeToDelete
 		if !safeToDelete {
